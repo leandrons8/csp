@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="pt-BR" data-bs-theme="dark">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>CSP Taks SLA</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons/font/bootstrap-icons.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap/dist/js/bootstrap.bundle.min.js"></script>
+    <script type="text/javascript" src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+  </head>
+  <body>
+    <nav class="navbar sticky-top bg-body-tertiary">
+      <div class="container">
+        <span class="navbar-brand">
+          CSP Taks SLA
+        </span>
+      </div>
+    </nav>
+    <div class="container p-3">
+      <div class="row">
+        <div class="col">
+          <input class="form-control" type="file" id="file">
+        </div>
+        <div class="col-auto">
+          <button type="button" class="btn btn-secondary" id="download" disabled>
+            <i class="bi bi-download"></i>
+          </button>
+        </div>
+      </div>
+      <div class="row">
+        <div class="col" id="table_div"></div>
+      </div>
+    </div>
+    <script>
+      const inputFile = document.getElementById('file')
+
+      const table_div = document.getElementById('table_div')
+
+      const download_btn = document.getElementById('download')
+
+      const cols = [
+        "Task", "Opened", "State", "Closed", "Business elapsed time",
+        "Business time left", "Assigned to"
+      ]
+
+      const fv = "Fixed Variables"
+
+      const fv_cols = {
+        "lista_de_atividades_00": "Activity",
+        "uep_00": "UEP",
+        "monitoramento_de_risers_rgidos_rrms_00": "RRMS",
+        "monitoramento_de_risers_flexveis_mod_00": "MODA",
+        "monitoramento_de_suportes_rsms_00": "RSMS",
+        "monitoramento_de_esdv_submarina_00": "ESDV",
+        "outros_00": "Others",
+        "descrio_da_tarefa_00": "Description",
+        "data_de_necessidade_00": "Need Date"
+      }
+
+      const cols_order = cols.concat(Object.values(fv_cols))
+
+      const dateNF = "yyyy/mm/dd hh:mm:ss"
+
+      const reader = new FileReader();
+      reader.onload = () => {
+        const wb = XLSX.read(reader.result, {cellDates: true, dense: true})
+        const ws = wb.Sheets[wb.SheetNames[0]]
+        const aoo = XLSX.utils.sheet_to_json(ws, {dateNF: dateNF})
+        cols.push(fv)
+        
+        const new_aoo = []
+        for (const obj of aoo){
+          const new_obj = {}
+          for (const [key, value] of Object.entries(obj)){
+            if (cols.slice(4, 6).includes(key)){
+              new_obj[key] = value/(24 * 3600)
+            } else if (fv == key){
+              const new_value = value.replaceAll('"true"', 'true').replaceAll('"false"', 'false')
+              const fv_obj = JSON.parse(new_value)
+              for (const [old_name, new_name] of Object.entries(fv_cols)){
+                if ("Need Date" == new_name){
+                  if (fv_obj[old_name]){
+                    new_obj[new_name] = new Date(fv_obj[old_name])
+                  } else {
+                    let days = 0
+                    const date = new Date(obj["Opened"])
+                    while (days < 15){
+                      date.setDate(date.getDate() + 1)
+                      if (date.getDay() !== 0 && date.getDay() !== 6){
+                        days++
+                      }
+                    }
+                    new_obj[new_name] = date
+                  }
+                } else {
+                  new_obj[new_name] = fv_obj[old_name]
+                }
+              }
+            } else if (cols.includes(key)){
+              new_obj[key] = value
+            }
+          }
+          new_aoo.push(new_obj)
+        }
+
+        const new_ws = XLSX.utils.json_to_sheet(
+          new_aoo,
+          {header: cols_order, cellDates: true, dense: true, dateNF: dateNF}
+        )
+        const html_object = document.createElement('div')
+        html_object.innerHTML = XLSX.utils.sheet_to_html(new_ws, {id: "table"})
+
+        const html_table = html_object.getElementsByTagName("table")[0]
+        html_table.className = "table table-striped table-hover"
+
+        const html_thead = document.createElement("thead")
+        html_table.prepend(html_thead)
+
+        const html_thead_tr = document.createElement("tr")
+        html_thead.append(html_thead_tr)
+
+        for (const td of html_table.children[1].children[0].children){
+          const th = document.createElement("th")
+          th.scope = "col"
+          th.innerHTML = td.innerHTML
+          html_thead_tr.append(th)
+        }
+
+        html_table.children[1].removeChild(html_table.children[1].children[0])
+        table_div.append(html_table)
+      }
+      reader.onerror = () => {
+        showMessage("Error reading the file. Please try again.", "error");
+      }
+
+      inputFile.addEventListener("change", async () => {
+        table_div.innerHTML = null
+        try {
+          if (!inputFile.files[0].name.endsWith(".xlsx")){
+            throw new Error("Invalid file")
+          }
+          reader.readAsArrayBuffer(inputFile.files[0])
+          download_btn.disabled = false
+        }
+        catch(err) {
+          table_div.innerHTML = err.message
+          download_btn.disabled = true
+        }
+      })
+
+      download_btn.addEventListener("click", async () => {
+        const tbl = document.getElementById('table')
+        const wb = XLSX.utils.table_to_book(tbl, {cellDates: true, dateNF: dateNF})
+        const ws = wb.Sheets[wb.SheetNames[0]]
+        const range = XLSX.utils.decode_range(ws["!ref"])
+        for (let i = 1; i <= range.e.r; i++){
+          ws[XLSX.utils.encode_cell({r:i, c:4})].z = "0.000"
+          ws[XLSX.utils.encode_cell({r:i, c:5})].z = "0.000"
+          for (let j = 9; j <= 13; j++){
+            const cell = ws[XLSX.utils.encode_cell({r:i, c:j})]
+            cell.v = (cell.v == "true") ? true : false
+            cell.t = "b"
+          }
+        }
+        XLSX.writeFile(wb, "SheetJSTable.xlsx", {cellDates: true})
+      })
+    </script>
+  </body>
+</html>
